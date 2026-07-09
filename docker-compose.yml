@@ -1,0 +1,13 @@
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.uv
+    image: agent-system:latest
+    container_name: agent-system
+    env_file:
+      - .env
+    volumes:
+      - ./input:/input
+      - ./output:/output

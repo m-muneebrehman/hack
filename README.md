@@ -35,16 +35,23 @@ uv run python agent.py
 
 To run the agent in a secure, containerized environment matching the challenge requirements:
 
-### 1. Build the Image
-We provide an optimized `Dockerfile.uv` for faster builds:
+### 1. Build & Run (Easiest Method)
+We provide a `docker-compose.yml` file which automatically handles volume mounting and passing environment variables from your `.env` file.
+
+Simply run:
+```bash
+docker compose up --build
+```
+
+### Alternative: Manual Docker Commands
+If you prefer not to use Compose, you can build and run manually:
+
+**Build:**
 ```bash
 docker build -t agent-system:latest -f Dockerfile.uv .
 ```
 
-### 2. Run the Container
-You must mount the `input` and `output` directories so the container can read your tasks and save the results. Inject your API key as an environment variable.
-
-**Windows (PowerShell):**
+**Run (Windows PowerShell):**
 ```powershell
 docker run --rm `
   -v "${PWD}/input:/input" `
@@ -53,7 +60,7 @@ docker run --rm `
   agent-system:latest
 ```
 
-**Linux / macOS (Bash):**
+**Run (Linux / macOS Bash):**
 ```bash
 docker run --rm \
   -v $(pwd)/input:/input \
