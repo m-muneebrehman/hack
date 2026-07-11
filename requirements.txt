@@ -4,3 +4,5 @@ pydantic>=2.0
 python-dotenv>=1.0
 textblob>=0.18
 spacy>=3.7
+llama-cpp-python>=0.3
+huggingface-hub>=0.20

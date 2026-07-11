@@ -1,413 +1,216 @@
-AI Agent System Documentation
-Overview
-This document outlines the architecture, development workflow, and deployment strategy for the General-Purpose AI Agent built for the Fireworks AI Challenge. The system uses a supervisor-worker pattern with specialized prompts to achieve high accuracy while minimizing token usage.
+```markdown
+# Implementation Plan: Track 1 Hybrid Token-Efficient Routing Agent (v3)
+### For: Coding Agent Handoff
+### Goal: Upgrade current system from "deterministic-solvers + single-model-fallback" to "deterministic-solvers → local-LLM-with-validation → per-category ranked Fireworks routing with reasoning suppression → bounded escalation"
+
+---
+
+## 0. Context (read this first)
+
+### What this system does
+This is a submission for the AMD Developer Hackathon Track 1 ("Hybrid Token-Efficient Routing Agent"). The harness feeds a fixed set of tasks via `/input/tasks.json`, spanning 8 categories (factual QA, math reasoning, sentiment analysis, summarization, named-entity recognition, code debugging, logical reasoning, code generation). The agent must write answers to `/output/results.json`. It is scored on:
+1. **Accuracy gate** — must clear a minimum accuracy threshold (LLM-judged and/or exact-match depending on category).
+2. **Token count** — ranked by total tokens consumed, but **only tokens routed through `FIREWORKS_BASE_URL` count**. Local/in-container inference costs zero score-relevant tokens.
+
+### Hard constraints (grading environment)
+- **4 GB RAM, 2 vCPU** — a 7B 4-bit model fills the entire RAM budget; only 2B–3B 4-bit quantized models are safe.
+- **No Ollama or model runtime pre-installed** — model weights must be bundled directly in the Docker image.
+- **Docker image size limit: 10 GB compressed.**
+- **`linux/amd64` platform required.**
+- Failure modes to avoid (from participant guide): `PULL_ERROR`, `RUNTIME_ERROR`, `TIMEOUT`, `INVALID_RESULTS_SCHEMA`, `MODEL_VIOLATION`, `IMAGE_TOO_LARGE`, `ACCURACY_GATE_FAILED`.
+- `ALLOWED_MODELS` is provided by the harness at runtime as an env var — **never hardcode a specific Fireworks model string anywhere in the code.**
+- `FIREWORKS_API_KEY` and `FIREWORKS_BASE_URL` are harness-provided — do not require or reference personal keys.
+
+### Current state (v2) — what exists already
+- Tier 0: zero-token regex/keyword classifier → category
+- Tier 1: deterministic solvers for math (Python), sentiment (TextBlob), NER (spaCy `en_core_web_sm`) — zero tokens
+- Tier 2: single Fireworks model call (currently hardcoded to one model in `.env`) for everything else — no validation, no retry, no reasoning suppression
+- Docker/compose setup, `linux/amd64` build, `.env` handling, submission checklist — this part is solid, keep it
+
+### What's wrong with v2 (why we're changing it)
+1. Only 3 of 8 categories are ever answered for free — everything else pays full Fireworks price.
+2. No suppression of hidden reasoning tokens — models can silently bill 100+ tokens of invisible "thinking" even for a one-word answer. This is the single largest token-savings lever available and is currently unused.
+3. Every non-deterministic task routes to one fixed, hardcoded model — no per-category cost/accuracy optimization, and hardcoding violates the "never hardcode model strings" rule (risk of `MODEL_VIOLATION` if that model isn't in this run's `ALLOWED_MODELS`).
+4. No output validation or retry — a truncated/malformed Fireworks response just fails silently, risking the accuracy gate or `INVALID_RESULTS_SCHEMA`.
+
+### Target architecture (v3)
+
+```
+task (from /input/tasks.json)
+   │
+   ▼
+[Layer 0] Zero-LLM regex/keyword classifier → category
+   │
+   ▼
+[Layer 1] Deterministic solvers (0 tokens, 0 local inference)
+   │   - math: sandboxed eval / sympy
+   │   - code debugging: AST parse + execute vs expected output (where checkable)
+   │   - simple/templated logic: programmatic solve (where pattern-recognizable)
+   │   - sentiment: TextBlob (keep existing)
+   │   - NER: spaCy (keep existing)
+   │   solved? ──yes──► write answer, done (0 Fireworks tokens)
+   │   no
+   ▼
+[Layer 2] Local LLM (bundled 2-3B 4-bit GGUF, in-process via llama-cpp-python)
+   │   - handles: summarization, factual QA, sentiment/NER fallback, first attempt at logic/code
+   │   - self-validation: JSON schema check / word-limit check / finish_reason check / AST-compile check
+   │   passes validation? ──yes──► write answer, done (0 Fireworks tokens)
+   │   no
+   ▼
+[Layer 3] Fireworks API — per-category ranked model, reasoning suppressed
+   │   - read ALLOWED_MODELS from env at runtime
+   │   - use precomputed category→ranked-model table (built from offline bake-off)
+   │   - apply reasoning_effort:"none" (or working equivalent per model family)
+   │   - tight per-category max_tokens budget
+   │   - validate response (schema/word-limit/finish_reason/AST-compile)
+   │   passes? ──yes──► write answer, done
+   │   no
+   ▼
+[Layer 4] Single bounded retry — thinking-ON, same or next-ranked model
+   │   passes? ──yes──► write answer, done
+   │   no ──► write best-effort non-empty answer (never leave a task_id blank)
+   ▼
+[Cache] Normalized-prompt → answer cache checked before Layer 2, updated after any successful answer
+   ▼
+/output/results.json + agent.log (per-task: layer used, tokens, category, escalation reason)
+```
+
+---
+
+## 1. Goals & Non-Goals
+
+**Goals**
+- Maximize the fraction of tasks answered at Layer 0/1/2 (zero Fireworks tokens).
+- When Fireworks must be used, minimize tokens via reasoning suppression + per-category cheapest-sufficient model + tight budgets.
+- Never fail the accuracy gate — validation and bounded escalation exist specifically to prevent this.
+- Never crash, never exceed image/RAM limits, never emit an invalid results schema.
+
+**Non-Goals**
+- Do not try to build a local model good enough to replace Fireworks for code/logic entirely — validate hard and escalate instead of over-trusting a 3B model.
+- Do not use the local LLM to choose *which* Fireworks model to call — that decision is precomputed offline (see Phase 2), not made live.
+
+---
+
+## 2. Workstreams & Tasks
+
+### Phase 1 — Local LLM tier (highest priority — currently missing entirely)
+
+- [ ] Add `llama-cpp-python` to `requirements.txt` / `pyproject.toml`.
+- [ ] Download **Qwen2.5-3B-Instruct-GGUF, Q4_K_M** (~1.9GB) at **Docker build time** (not runtime) into `/app/models/`. Source: Hugging Face `Qwen/Qwen2.5-3B-Instruct-GGUF`.
+- [ ] Implement `clients.py::get_local_model()` — lazy singleton, loaded once on first call, not per-task. Log load time to `agent.log`.
+- [ ] Implement `clients.py::call_local(system_prompt, user_prompt, max_tokens)` using `llm.create_chat_completion`.
+- [ ] Wire Layer 2 into `agent.py`: for categories not resolved by Layer 1 deterministic solvers, attempt local LLM first.
+- [ ] **Fallback model**: if 3B proves too slow/large for the 4GB/2vCPU budget once combined with spaCy/TextBlob, fall back to Qwen2.5-1.5B-Instruct-GGUF Q4_K_M (~1GB). Decision must be based on measured latency + accuracy from Phase 5 eval, not assumption.
+- [ ] Measure total image footprint (spaCy model + TextBlob + GGUF weights + deps) — confirm comfortably under 10GB compressed.
 
-Architecture Goals
-Primary Objectives
-Token Efficiency: Minimize API token consumption while maintaining accuracy
+**Acceptance criteria:** Local model loads once at startup, answers summarization/factual-QA/simple tasks in-process, zero calls to Fireworks for these, latency per task measured and logged.
 
-Accuracy: Pass the LLM-Judge threshold across all 8 capability categories
+---
 
-Runtime: Complete all tasks within the 10-minute limit
+### Phase 2 — Reasoning suppression + model bake-off (second highest priority)
 
-Reliability: Graceful fallback mechanisms for edge cases
+- [ ] Write `scripts/bakeoff.py`: for each model string that could plausibly appear in `ALLOWED_MODELS`, test:
+  - Baseline call (no reasoning param) — record tokens, accuracy on `eval_labeled.json`.
+  - Call with `reasoning_effort: "none"` — record tokens, accuracy, and whether the API accepted the param (watch for HTTP 400).
+  - Test any other documented reasoning-disable params per model family (e.g. `thinking: false`) if `reasoning_effort` isn't recognized.
+- [ ] From bake-off results, build a static, hardcoded **`CATEGORY_MODEL_RANKING`** table in `router.py`: for each of the 8 categories, an ordered list of preferred models (cheapest-sufficient first) plus which reasoning-suppression param (if any) worked for each.
+- [ ] Implement runtime logic in `clients.py::call_fireworks()`:
+  - Read `ALLOWED_MODELS` from env, split into a set.
+  - For the task's category, walk `CATEGORY_MODEL_RANKING` and pick the first model that's actually present in `ALLOWED_MODELS` this run.
+  - Apply the reasoning-suppression param associated with that model in the ranking table.
+  - **On HTTP 400 referencing the reasoning param**: catch it, retry the same call without the param, and set a run-wide flag to skip that param for all subsequent calls to that model this run (don't retry the param per-call after the first rejection — wastes latency).
+- [ ] Log actual tokens used per call (`response.usage.total_tokens`) to `token_tracker.py`.
 
-Design Principles
-Single-Pass Processing: Each task flows through supervisor -> worker -> result (no loops)
+**Acceptance criteria:** No model string is ever hardcoded outside `CATEGORY_MODEL_RANKING`, which itself is validated against `ALLOWED_MODELS` at runtime, not assumed present. Reasoning suppression is applied by default and gracefully degrades on rejection.
 
-Specialized Prompts: Each worker has a focused, minimal prompt for its category
+---
 
-Deterministic Outputs: Low temperature (0.1) for consistent, predictable results
+### Phase 3 — Deterministic solver expansion
 
-Structured Validation: Pydantic models for input/output validation
+- [ ] Keep existing math/sentiment/NER solvers as-is.
+- [ ] Add **code debugging solver**: for tasks where expected output is checkable, execute the provided code (sandboxed subprocess, timeout-bound) and compare against expected output; if it matches a fixable pattern (e.g. off-by-one, missing import), apply a rule-based fix and re-verify. If not confidently resolvable, fall through to Layer 2/3 — do not guess.
+- [ ] Add **simple logic puzzle solver**: pattern-match templated logic tasks (e.g. constraint satisfaction with small enumerable state space) and solve programmatically. Fall through if the pattern isn't recognized.
+- [ ] All deterministic solvers must have a **confidence gate**: only claim a solved answer when verification is 100% certain (e.g. code actually executed and matched expected output). Never emit a "probably right" deterministic answer — that's what Layer 2/3 are for.
 
-Graceful Degradation: Fallback LLM call if main workflow fails
+**Acceptance criteria:** Deterministic layer only ever emits verified-correct answers; anything uncertain falls through cleanly to the next layer.
 
-System Architecture
-Core Components
-text
-+-------------------------------------------------------------+
-|                      AGENT SYSTEM                            |
-+-------------------------------------------------------------+
-|                                                             |
-|  +-------------+    +--------------+    +-------------+     |
-|  |   Input     |    |  Supervisor  |    |   Workers   |     |
-|  |  /input/    |--->|  (Router)    |--->|  (Special-  |     |
-|  |  tasks.json |    |              |    |   ized)     |     |
-|  +-------------+    +--------------+    +-------------+     |
-|                                                             |
-|  +-----------------------------------------------------+   |
-|  |             Output /output/results.json              |   |
-|  +-----------------------------------------------------+   |
-|                                                             |
-+-------------------------------------------------------------+
-Component Details
-1. Supervisor (Router)
-Function: Classifies task category using a lightweight LLM call
+---
 
-Output: Category name (factual, math, sentiment, etc.)
+### Phase 4 — Validation & escalation logic
 
-Optimization: Uses with_structured_output() for clean parsing
+- [ ] Implement `validators.py`:
+  - `validate_json(answer, expected_schema) -> bool`
+  - `validate_word_limit(answer, category) -> bool`
+  - `validate_finish_reason(response) -> bool` (reject if `finish_reason == "length"`, i.e. truncated)
+  - `validate_code_compiles(answer) -> bool` (AST parse, and execute if expected output is known)
+- [ ] Wire validation after every Layer 2 (local) and Layer 3 (Fireworks) attempt.
+- [ ] Implement **Layer 4 bounded retry**: exactly one retry per task, with thinking/reasoning turned ON (i.e. remove the suppression param) and/or escalate to the next-ranked model in `CATEGORY_MODEL_RANKING`. No further retries after this — cap total per-task attempts.
+- [ ] Implement final safety net: if all layers fail validation, still write a **non-empty, schema-valid** best-effort answer (last raw output, even if imperfect) — never leave a `task_id` missing or null, since that risks `INVALID_RESULTS_SCHEMA` and guarantees zero credit for that task.
 
-Token Cost: ~50-100 tokens per task
+**Acceptance criteria:** Every `task_id` present in input has a corresponding non-empty, schema-conformant entry in `/output/results.json`, with no exceptions.
 
-2. Workers (Specialized Processors)
-Function: Process tasks in their specific domain
+---
 
-Implementation: 8 specialized prompts, one per category
+### Phase 5 — Eval harness (build before finalizing routing tables)
 
-Pattern: Factory function creates workers with category-specific prompts
+- [ ] Create `input/eval_labeled.json` — 30-50 tasks spanning all 8 categories with ground-truth answers (hand-labeled or drawn from the practice tasks in the participant guide, expanded).
+- [ ] Build `eval.py`:
+  - Runs the full v3 pipeline against `eval_labeled.json`.
+  - Reports: accuracy % overall and per-category, total Fireworks tokens, % tasks resolved at each layer (0/1/2/3/4), average latency per category.
+  - Used to tune: local-model confidence thresholds, per-category model ranking, max_tokens budgets, and to decide 3B vs 1.5B for the local model.
+- [ ] Run `eval.py` after each major phase change — this is the feedback loop for tuning, not a one-time step at the end.
 
-Token Cost: ~100-200 tokens per task (system prompt + response)
+**Acceptance criteria:** `eval.py` produces a clear before/after comparison (v2 baseline vs v3) on accuracy and token count.
 
-3. State Management
-Structure: TypedDict with minimal state fields
+---
 
-Fields: messages, task_id, original_prompt, category, worker_output
+### Phase 6 — Caching
 
-Purpose: Lightweight state passing between nodes
+- [ ] Implement `token_tracker.py` companion: normalized-prompt → answer cache (in-memory dict for a single run is sufficient — no cross-run persistence needed unless the task set repeats across runs).
+- [ ] Check cache before attempting Layer 2; update cache after any successful answer at any layer.
+- [ ] Normalize prompts (lowercase, strip whitespace, etc.) before cache key generation to catch near-duplicates.
 
-4. Fallback Handler
-Trigger: When main workflow fails
+**Acceptance criteria:** Repeated/duplicate prompts within a single run resolve from cache with zero additional inference cost.
 
-Action: Direct LLM call with general-purpose prompt
+---
 
-Purpose: Ensures graceful degradation
+### Phase 7 — Hardening against harness failure modes
 
-Data Flow
-Input Reading: Load tasks from /input/tasks.json
+- [ ] **`MODEL_VIOLATION`**: at startup, log a warning (not a crash) for any model in `CATEGORY_MODEL_RANKING` not present in this run's `ALLOWED_MODELS`; confirm the fallback walk never attempts a non-allowed model.
+- [ ] **`TIMEOUT`**: add a global per-task timeout wrapper; if Fireworks is slow/unresponsive, fall back to the best local-only answer rather than hanging.
+- [ ] **`INVALID_RESULTS_SCHEMA`**: confirm output writer always emits the exact expected keys (`task_id`, `answer` — confirm exact schema against harness docs) for every input task, no extras, no omissions.
+- [ ] **`IMAGE_TOO_LARGE`**: after Phase 1, run `docker images` and confirm compressed size; strip unnecessary build artifacts/cache from the final image layer.
+- [ ] **`RUNTIME_ERROR`**: test the full container on a resource-constrained environment (`docker run --memory=4g --cpus=2`) to simulate grading conditions before submission.
+- [ ] **`PULL_ERROR`**: confirm final image is pushed to a public registry with an exact tag reference, no `https://` prefix, before final submission.
+- [ ] **`ACCURACY_GATE_FAILED`**: after Phase 5 eval shows accuracy comfortably above threshold (not just barely passing — practice tasks won't perfectly match the real grading set), do a final full run.
 
-Task Processing: For each task:
+---
 
-Create initial state
+## 3. File-by-File Change Summary
 
-Run supervisor to detect category
+| File | Change |
+|---|---|
+| `clients.py` | Add `get_local_model()`, `call_local()`, rewrite `call_fireworks()` to use `CATEGORY_MODEL_RANKING` + reasoning suppression + `ALLOWED_MODELS` validation |
+| `router.py` | Add `CATEGORY_MODEL_RANKING` table (from bake-off), keep existing zero-token classifier |
+| `validators.py` | **New file** — JSON/word-limit/finish_reason/AST-compile checks |
+| `solvers.py` | Expand existing math/sentiment/NER with code-debug and simple-logic solvers |
+| `token_tracker.py` | Add cache logic, per-layer token/accuracy logging |
+| `agent.py` | Rewire main loop to the 5-layer pipeline (0→1→2→3→4→cache write) |
+| `scripts/bakeoff.py` | **New file** — offline model/reasoning-param benchmarking |
+| `eval.py` | **New file** — full pipeline eval against `eval_labeled.json` |
+| `input/eval_labeled.json` | **New file** — labeled dev set |
+| `Dockerfile.uv` | Add GGUF model download at build time, confirm image size after |
+| `requirements.txt` / `pyproject.toml` | Add `llama-cpp-python` |
 
-Route to appropriate worker
+---
 
-Execute worker with specialized prompt
+## 4. Definition of Done
 
-Extract answer
-
-Output Writing: Write results to /output/results.json
-
-Specialized Prompts
-Category	Prompt Focus	Token Budget
-factual	Explain concepts concisely, under 150 words	~50 tokens
-math	Show only essential steps, final answer clear	~50 tokens
-sentiment	JSON output, brief justification	~40 tokens
-summary	Follow exact length constraints	~40 tokens
-ner	JSON output with entity types	~40 tokens
-code_debug	Brief bug explanation + corrected code	~60 tokens
-logic	List constraints, concise reasoning	~50 tokens
-code_gen	Clean code with type hints	~60 tokens
-general	Direct, factual, under 200 words	~30 tokens
-Development Setup
-Prerequisites
-Python 3.11+
-
-UV (fast Python package installer)
-
-Docker (for containerization)
-
-Fireworks AI API key
-
-Local Development with UV
-Install UV
-
-bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-Initialize Project
-
-bash
-uv init agent-system
-cd agent-system
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-Install Dependencies
-
-bash
-uv add langgraph langchain-openai langchain-core pydantic python-dotenv
-uv add --dev pytest black mypy
-Create Environment File
-
-bash
-# .env
-FIREWORKS_API_KEY=your_api_key_here
-FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1
-ALLOWED_MODELS=accounts/fireworks/models/llama-v3p3-70b-instruct
-Run Locally
-
-bash
-# Create input directory with test tasks
-mkdir -p input output
-echo '[{"task_id": "t1", "prompt": "Explain photosynthesis"}]' > input/tasks.json
-
-# Run agent
-python agent.py
-Docker Deployment
-Build Image
-bash
-# Build with UV in Docker
-docker build -t agent-system:latest -f Dockerfile.uv .
-
-# Or build with pip
-docker build -t agent-system:latest -f Dockerfile .
-Run Container
-bash
-# Basic run
-docker run --rm \
-  -v $(pwd)/input:/input \
-  -v $(pwd)/output:/output \
-  -e FIREWORKS_API_KEY=$FIREWORKS_API_KEY \
-  -e FIREWORKS_BASE_URL=$FIREWORKS_BASE_URL \
-  -e ALLOWED_MODELS=$ALLOWED_MODELS \
-  agent-system:latest
-Push to Registry
-bash
-# Tag image
-docker tag agent-system:latest ghcr.io/your-username/agent-system:latest
-
-# Login to registry
-echo $GITHUB_TOKEN | docker login ghcr.io -u your-username --password-stdin
-
-# Push image
-docker push ghcr.io/your-username/agent-system:latest
-Dockerfile Options
-Option 1: Fast with UV (Recommended)
-dockerfile
-# Dockerfile.uv
-FROM python:3.11-slim
-
-# Install UV
-RUN pip install uv
-
-WORKDIR /app
-
-# Copy dependency files
-COPY pyproject.toml uv.lock ./
-
-# Install dependencies with UV
-RUN uv sync --frozen --no-dev
-
-# Copy application code
-COPY agent.py .
-
-# Create directories
-RUN mkdir -p /input /output
-
-# Environment variables (overridden at runtime)
-ENV FIREWORKS_API_KEY=""
-ENV FIREWORKS_BASE_URL=""
-ENV ALLOWED_MODELS=""
-
-ENTRYPOINT ["uv", "run", "python", "agent.py"]
-Option 2: Traditional with Pip
-dockerfile
-# Dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Copy requirements
-COPY requirements.txt .
-
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY agent.py .
-
-# Create directories
-RUN mkdir -p /input /output
-
-# Environment variables
-ENV FIREWORKS_API_KEY=""
-ENV FIREWORKS_BASE_URL=""
-ENV ALLOWED_MODELS=""
-
-ENTRYPOINT ["python", "agent.py"]
-Project Structure
-text
-agent-system/
-├── agent.py              # Main application code
-├── pyproject.toml        # UV project configuration
-├── uv.lock              # UV lock file (auto-generated)
-├── requirements.txt      # Pip dependencies (if using pip)
-├── Dockerfile           # Docker build file
-├── Dockerfile.uv        # Docker build file (UV version)
-├── .env                 # Local environment variables (gitignored)
-├── .gitignore           # Git ignore file
-├── input/               # Input directory (mounted volume)
-│   └── tasks.json       # Task definitions
-├── output/              # Output directory (mounted volume)
-│   └── results.json     # Results file
-└── tests/               # Test directory
-    ├── test_agent.py    # Unit tests
-    └── fixtures/        # Test fixtures
-        └── tasks.json   # Sample tasks for testing
-Configuration
-Environment Variables
-Variable	Description	Required
-FIREWORKS_API_KEY	API key provided by harness	Yes
-FIREWORKS_BASE_URL	Base URL for API calls	Yes
-ALLOWED_MODELS	Comma-separated list of model IDs	Yes
-Runtime Settings
-python
-# agent.py configuration section
-MODEL = ALLOWED_MODELS[0]        # Use first allowed model
-TEMPERATURE = 0.1                # Low for deterministic outputs
-MAX_TOKENS = 2048                # Max response length
-INPUT_FILE = "/input/tasks.json"
-OUTPUT_FILE = "/output/results.json"
-Testing
-Unit Tests
-python
-# tests/test_agent.py
-import pytest
-from agent import TaskProcessor, detect_task_category
-
-def test_category_detection():
-    assert detect_task_category("Calculate 15% of 200") == "math"
-    assert detect_task_category("Who is the CEO of Apple?") == "factual"
-    assert detect_task_category("This product is amazing!") == "sentiment"
-
-def test_task_processor():
-    processor = TaskProcessor()
-    result = processor.process_task("t1", "Explain gravity")
-    assert result["task_id"] == "t1"
-    assert result["success"] == True
-    assert len(result["answer"]) > 0
-
-def test_output_format():
-    # Test that output matches expected JSON schema
-    import json
-    with open("input/tasks.json", "r") as f:
-        tasks = json.load(f)
-    
-    # Process and validate
-    from agent import main
-    # ... validation logic
-Running Tests
-bash
-# Run all tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=agent tests/
-
-# Run specific test
-pytest tests/test_agent.py::test_category_detection
-Deployment Checklist
-Before Submission
-Test with sample tasks locally
-
-Verify all environment variables are read correctly
-
-Ensure Docker image builds successfully
-
-Check image size < 10GB
-
-Test input/output directory mounting
-
-Verify JSON output format
-
-Confirm Fireworks API calls use FIREWORKS_BASE_URL
-
-No hardcoded API keys or model IDs
-
-Exit code 0 on success
-
-Runtime under 10 minutes
-
-Docker Image Tags
-bash
-# Version tags
-docker tag agent-system:latest ghcr.io/username/agent-system:latest
-docker tag agent-system:latest ghcr.io/username/agent-system:v1.0.0
-
-# Development tags
-docker tag agent-system:latest ghcr.io/username/agent-system:dev
-Performance Monitoring
-Token Usage Tracking
-python
-# Add token tracking to agent.py
-import logging
-
-def process_task_with_tracking(self, task_id: str, prompt: str):
-    # Track token usage
-    logging.info(f"Processing task {task_id}")
-    start_time = time.time()
-    
-    result = self.process_task(task_id, prompt)
-    
-    elapsed = time.time() - start_time
-    logging.info(f"Task {task_id} completed in {elapsed:.2f}s")
-    
-    return result
-Metrics to Monitor
-Token per Task: Average tokens consumed per task
-
-Success Rate: Percentage of tasks processed successfully
-
-Runtime per Task: Time taken per task
-
-Fallback Rate: Frequency of fallback handler usage
-
-Security Guidelines
-Never hardcode API keys - Use environment variables
-
-No .env in Docker image - Variables injected at runtime
-
-Validate inputs - Sanitize prompt content before processing
-
-Error logging - Log errors but don't expose sensitive data
-
-Rate limiting - Handle API rate limits gracefully
-
-Troubleshooting
-Common Issues
-Issue	Solution
-Docker image too large	Use slim base image, remove cache
-Token usage too high	Reduce prompt length, lower temperature
-Invalid JSON output	Use structured output, validate response
-Timeout errors	Add retry logic, reduce complexity
-API rate limiting	Implement exponential backoff
-Debug Commands
-bash
-# Check Docker image size
-docker images | grep agent-system
-
-# View container logs
-docker logs <container_id>
-
-# Run with bash for debugging
-docker run --rm -it agent-system:latest /bin/bash
-
-# Test locally with environment
-python -c "import os; print(os.environ.get('FIREWORKS_API_KEY'))"
-References
-LangGraph Documentation: https://langchain-ai.github.io/langgraph/
-
-Fireworks AI API: https://docs.fireworks.ai/
-
-Docker Best Practices: https://docs.docker.com/develop/dev-best-practices/
-
-UV Package Manager: https://docs.astral.sh/uv/
-
-Notes
-Token Efficiency is Key: The leaderboard is ranked by token usage
-
-Accuracy First: Must pass threshold before token ranking applies
-
-Single Submission: One Docker image per team
-
-Rate Limit: 10 submissions per hour per team
-
-Last Updated: 2026-07-07
-Version: 1.0.0
-Maintainer: AI Engineering Team
-
-
-
-
+- [ ] All 8 categories have a defined path through the layer pipeline (not just math/sentiment/NER).
+- [ ] Zero hardcoded Fireworks model strings anywhere in the codebase — all resolved via `ALLOWED_MODELS` + ranking table at runtime.
+- [ ] Reasoning suppression applied by default, with graceful degradation on rejection.
+- [ ] Every task_id always produces a valid, non-empty answer, even in total-failure fallback paths.
+- [ ] `eval.py` shows accuracy comfortably clearing the gate and total Fireworks tokens meaningfully lower than the v2 baseline.
+- [ ] Clean `docker buildx build --platform linux/amd64` from scratch succeeds, image under 10GB, container runs under simulated 4GB/2vCPU constraints without error.
+- [ ] `agent.log` clearly shows per-task layer/model/token/escalation decisions for post-hoc review.
+```

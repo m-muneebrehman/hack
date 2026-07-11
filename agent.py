@@ -111,7 +111,7 @@ MAX_TOKENS_BY_CATEGORY = {
     "summary":    120,   # one sentence or short paragraph
     "ner":        120,   # JSON entity list
     "code_debug": 350,   # explanation + corrected function
-    "logic":      140,   # step-by-step + answer
+    "logic":      350,   # step-by-step + answer
     "code_gen":   448,   # full function with docstring
     "general":    100,
 }
@@ -125,7 +125,7 @@ WORKER_PROMPTS = {
     "factual":
         "Answer in 1-3 sentences. Facts only.",
     "math":
-        "Show key steps. Final answer on last line as: Answer: X",
+        "Show key steps. Final answer on last line exactly as the number.",
     "sentiment":
         'Return only: {"sentiment":"positive|negative|neutral|mixed",'
         '"confidence":0.0-1.0,"justification":"one sentence"}',
@@ -134,11 +134,11 @@ WORKER_PROMPTS = {
     "ner":
         'Return only: {"entities":[{"text":"...","type":"PERSON|ORG|LOC|DATE|OTHER"}]}',
     "code_debug":
-        "State the bug in one sentence. Output the corrected code only.",
+        "Output ONLY the corrected Python code block. No explanations.",
     "logic":
         "List each constraint. Deduce step by step. Final answer: [name]",
     "code_gen":
-        "Write a correct Python function with type hints and a one-line docstring.",
+        "Write a correct Python function. Output ONLY the Python code block. No explanations.",
     "general":
         "Answer directly. 2-4 sentences max.",
 }
@@ -146,6 +146,61 @@ WORKER_PROMPTS = {
 
 def get_worker_prompt(category: str) -> str:
     return WORKER_PROMPTS.get(category, WORKER_PROMPTS["general"])
+
+
+LOCAL_LLM_CATEGORIES = {"factual", "math", "sentiment", "summary", "ner", "general"}
+FIREWORKS_CATEGORIES = {"code_gen", "code_debug", "logic"}
+
+class TokenTracker:
+    def __init__(self):
+        self.local_llm_tasks = 0
+        self.fireworks_tasks = 0
+        self.local_solver_tasks = 0
+        self.fireworks_tokens = 0
+        self.total_tasks = 0
+    
+    def log_summary(self):
+        logger.info("=== TOKEN USAGE SUMMARY ===")
+        logger.info("Total tasks: %d | Fireworks calls: %d | Local LLM: %d | Local solvers: %d", 
+                    self.total_tasks, self.fireworks_tasks, self.local_llm_tasks, self.local_solver_tasks)
+        avg = self.fireworks_tokens / self.fireworks_tasks if self.fireworks_tasks > 0 else 0
+        logger.info("Fireworks tokens: %d | Avg: %.1f/call", self.fireworks_tokens, avg)
+
+tracker = TokenTracker()
+
+class LocalLLM:
+    def __init__(self, model_path: str):
+        try:
+            from llama_cpp import Llama
+            self.llm = Llama(
+                model_path=model_path,
+                n_ctx=2048,
+                n_threads=2,
+                n_gpu_layers=0,
+                verbose=False,
+            )
+            self.ready = True
+        except Exception as exc:
+            logger.warning("LocalLLM init failed: %s", exc)
+            self.ready = False
+            
+    def generate(self, category: str, prompt: str) -> Optional[str]:
+        if not self.ready:
+            return None
+        sys_prompt = get_worker_prompt(category)
+        try:
+            resp = self.llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=MAX_TOKENS_BY_CATEGORY.get(category, 256),
+                temperature=0.1,
+            )
+            return resp["choices"][0]["message"]["content"]
+        except Exception as exc:
+            logger.warning("LocalLLM generate failed: %s", exc)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +278,7 @@ def keyword_classify(prompt: str) -> Tuple[str, float]:
             r"\bfind the bug\b", r"\bfix this\b", r"\bfix this code\b",
             r"\bdebug\b", r"\btraceback\b", r"\bexception\b",
             r"\bhas a bug\b", r"\bshould return.*but\b",
+            r"\bcorrect\s+this\b", r"\bwhat.s wrong\b",
         ],
         "code_gen": [
             r"\bwrite a python\b", r"\bwrite code\b", r"\bwrite a function\b",
@@ -238,7 +294,7 @@ def keyword_classify(prompt: str) -> Tuple[str, float]:
             r"\bcalculate\b", r"\bsolve\b", r"\bequation\b",
             r"\d+\s*%", r"\bpercent\b", r"\bsquare root\b",
             r"\bhow many.*remain\b", r"\bhow much\b", r"\bsum of\b",
-            r"\bdivide\b", r"\bmultiply\b",
+            r"\bdivide\b", r"\bmultiply\b", r"\bhow many\b",
         ],
         "sentiment": [
             r"\bsentiment\b", r"\bclassify.*review\b",
@@ -256,6 +312,7 @@ def keyword_classify(prompt: str) -> Tuple[str, float]:
         "factual": [
             r"\bwho is\b", r"\bwhat is the capital\b", r"\bwhen did\b",
             r"\bwhere is\b", r"\bexplain\b", r"\bdefine\b", r"\bwhat is\b",
+            r"\bhow does\b", r"\bwhy does\b", r"\bwhat are\b",
         ],
     }
 
@@ -275,7 +332,7 @@ def _try_solve_math(prompt: str) -> Optional[str]:
     p = prompt.lower()
     m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)", p)
     if m:
-        return "Answer: {:g}".format(float(m.group(1)) / 100 * float(m.group(2)))
+        return "{:g}".format(float(m.group(1)) / 100 * float(m.group(2)))
     m = re.search(r"square root of\s*(\d+(?:\.\d+)?)", p)
     if m:
         result = math.sqrt(float(m.group(1)))
@@ -285,7 +342,27 @@ def _try_solve_math(prompt: str) -> Optional[str]:
         )
         if mult:
             result *= float(mult.group(1))
-        return "Answer: {:g}".format(result)
+        return "{:g}".format(result)
+
+    m = re.search(r"has\s+(\d+(?:\.\d+)?)\s+items.*?sells\s+(\d+(?:\.\d+)?)%.*?(and|then|also)\s+(\d+(?:\.\d+)?)\s+more", p)
+    if m:
+        initial = float(m.group(1))
+        percent_sold = float(m.group(2))
+        more_sold = float(m.group(4))
+        remaining = initial - (initial * percent_sold / 100) - more_sold
+        return "{:g}".format(remaining)
+        
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(divided by|/)\s*(\d+(?:\.\d+)?)", p)
+    if m:
+        try:
+            return "{:g}".format(float(m.group(1)) / float(m.group(3)))
+        except ZeroDivisionError:
+            pass
+
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(multiplied by|times|\*)\s*(\d+(?:\.\d+)?)", p)
+    if m:
+        return "{:g}".format(float(m.group(1)) * float(m.group(3)))
+
     return None
 
 
@@ -425,21 +502,38 @@ class FireworksClient:
                    max_tokens: int, reasoning_off: bool) -> Tuple[str, Optional[str]]:
         """Single API call. Returns (content, finish_reason)."""
         llm = self._make_llm(model_id, max_tokens, reasoning_off)
-        response = llm.invoke([
-            SystemMessage(content=get_worker_prompt(category)),
-            HumanMessage(content=prompt),
-        ])
-        finish = None
-        if hasattr(response, "response_metadata"):
-            finish = response.response_metadata.get("finish_reason")
-        tokens = 0
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            tokens = response.usage_metadata.get("total_tokens", 0)
-        logger.info(
-            "[%s] model=%s reasoning_none=%s tokens=%d finish=%s",
-            category, model_id.split("/")[-1], reasoning_off, tokens, finish
-        )
-        return response.content, finish
+        max_retries = 3
+        base_delay = 1.0
+        
+        for attempt in range(max_retries + 1):
+            try:
+                response = llm.invoke([
+                    SystemMessage(content=get_worker_prompt(category)),
+                    HumanMessage(content=prompt),
+                ])
+                finish = None
+                if hasattr(response, "response_metadata"):
+                    finish = response.response_metadata.get("finish_reason")
+                tokens = 0
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    tokens = response.usage_metadata.get("total_tokens", 0)
+                logger.info(
+                    "[%s] model=%s reasoning_none=%s tokens=%d finish=%s",
+                    category, model_id.split("/")[-1], reasoning_off, tokens, finish
+                )
+                tracker.fireworks_tokens += tokens
+                return response.content, finish
+            except Exception as exc:
+                err_str = str(exc)
+                if "429" in err_str or "503" in err_str:
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt)
+                        logger.warning("HTTP 429/503 caught. Retrying in %.1fs... (%s)", delay, exc)
+                        time.sleep(delay)
+                        continue
+                raise
+        # Should not reach here if raise works properly
+        return "", None
 
     def call(self, category: str, prompt: str) -> str:
         """
@@ -555,6 +649,7 @@ class TaskProcessor:
         start = time.time()
         answer: Optional[str] = None
         source = "fireworks"
+        tracker.total_tasks += 1
 
         # -- Tier 0: keyword classify --
         category, confidence = keyword_classify(prompt)
@@ -580,8 +675,23 @@ class TaskProcessor:
             if answer:
                 source = "spacy"
 
+        if answer is not None:
+            tracker.local_solver_tasks += 1
+
+        # -- Tier 1.5: Local LLM --
+        if answer is None and category in LOCAL_LLM_CATEGORIES and hasattr(self, 'local_llm'):
+            logger.info("[%s] Trying Local LLM for %s", task_id, category)
+            local_ans = self.local_llm.generate(category, prompt)
+            if local_ans and _validate_answer(category, local_ans, None):
+                answer = local_ans
+                source = "local_llm"
+                tracker.local_llm_tasks += 1
+            else:
+                logger.info("[%s] Local LLM answer invalid or empty, falling back to Fireworks", task_id)
+
         # -- Tier 2: Fireworks with reasoning_effort:none + validator + retry --
         if answer is None:
+            tracker.fireworks_tasks += 1
             answer = self.client.call(category, prompt)
             source = "fireworks[{}]".format(
                 self.client.primary.split("/")[-1]
@@ -623,6 +733,13 @@ def main() -> None:
 
     client = FireworksClient(ALLOWED_MODELS)
     processor = TaskProcessor(client)
+    
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+    if os.path.exists(model_path):
+        processor.local_llm = LocalLLM(model_path)
+    else:
+        logger.warning("Local LLM model not found at %s. Skipping Tier 1.5.", model_path)
+
     results = []
     total_start = time.time()
 
@@ -642,6 +759,8 @@ def main() -> None:
         logger.error("Cannot write output: %s", exc)
         print(json.dumps(results))
         sys.exit(1)
+
+    tracker.log_summary()
 
     logger.info(
         "Done in %.2fs | reasoning_none=%s",
