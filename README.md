@@ -4,7 +4,7 @@ A **token-efficient, accuracy-first AI agent** designed for the Fireworks AI Cha
 
 ---
 
-## 🚀 The Workflow (Smart Routing)
+## The Workflow (Smart Routing)
 
 We use a **4-Tier Pipeline** to process tasks based on difficulty to avoid burning API tokens:
 
@@ -21,7 +21,7 @@ When falling back to Tier 2, the agent uses several techniques to drop the token
 
 ---
 
-## 🛠️ Setup & Running Locally (Host Machine)
+## Setup & Running Locally (Host Machine)
 
 If you wish to run the agent natively on your Windows/Mac host without Docker:
 
@@ -50,7 +50,7 @@ The agent will process `input/tasks.json`. Check `output/results.json` for the f
 
 ---
 
-## 🐳 Docker Testing (Production Submission)
+## Docker Testing (Production Submission)
 
 To test the full submission environment using Docker (this is how the judges will evaluate the code):
 
@@ -65,7 +65,7 @@ docker compose up --build
 - Injects `FIREWORKS_API_KEY` from your `.env`.
 - Executes the agent automatically and prints the Token Usage score to the terminal.
 
-### 🏆 Expected Scoring Output
+### Expected Scoring Output
 - **Total API Tokens Used:** ~380-400 tokens across all 8 tasks.
 - **Accuracy:** Passing grade on all Logic, Factual, and Math tasks.
 - **Docker Footprint:** Total image size is well under the 10GB limit (approx ~1.5GB total footprint).
