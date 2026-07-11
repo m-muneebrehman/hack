@@ -97,6 +97,9 @@ USE_REASONING_NONE = True   # toggled False on first HTTP 400
 # Preferred model (bake-off winner: best accuracy + tokenizer efficiency)
 # ---------------------------------------------------------------------------
 PREFERRED_MODELS = [
+    "deepseek-v4",
+    "deepseek-v3",
+    "deepseek",
     "accounts/fireworks/models/kimi-k2p7-code",
     "accounts/fireworks/models/kimi-k2.7-code",
     "accounts/fireworks/models/kimi-k2p7",
@@ -451,13 +454,32 @@ def _infer_model_size(model_id: str) -> int:
     return 8
 
 
-def _pick_primary_model(allowed: List[str]) -> str:
-    """Return the best model from ALLOWED_MODELS, preferring kimi-k2p7-code."""
+def _pick_primary_model(allowed: List[str], local_llm=None) -> str:
+    """Return the best model from ALLOWED_MODELS, preferring deepseek-v4."""
     for preferred in PREFERRED_MODELS:
         for m in allowed:
             if preferred in m or m in preferred:
                 logger.info("Primary model: %s (preferred)", m)
                 return m
+                
+    if local_llm is not None:
+        try:
+            prompt = (
+                "You are an AI choosing the best model. "
+                f"Available models: {', '.join(allowed)}. "
+                "Which is the most powerful model? "
+                "Output ONLY the exact string of the model name. No explanation."
+            )
+            ans, _ = local_llm._call("general", prompt, 30)
+            if ans:
+                ans = ans.strip()
+                for m in allowed:
+                    if ans == m or m in ans:
+                        logger.info("Primary model: %s (chosen by Local LLM)", m)
+                        return m
+        except Exception as exc:
+            logger.warning("Local LLM failed to pick model: %s", exc)
+
     # Fallback: largest model for best accuracy
     ranked = sorted(allowed, key=_infer_model_size, reverse=True)
     logger.info("Primary model: %s (largest available)", ranked[0])
@@ -476,10 +498,10 @@ class FireworksClient:
     - One thinking-ON retry on validation failure
     """
 
-    def __init__(self, allowed: List[str]):
+    def __init__(self, allowed: List[str], local_llm=None):
         global USE_REASONING_NONE
         self.allowed = allowed
-        self.primary = _pick_primary_model(allowed)
+        self.primary = _pick_primary_model(allowed, local_llm)
         self._cache: dict = {}
 
     def _make_llm(self, model_id: str, max_tokens: int,
@@ -731,14 +753,17 @@ def main() -> None:
     logger.info("Loaded %d tasks. Primary model: %s", len(tasks), ALLOWED_MODELS)
     logger.info("reasoning_effort:none = %s", USE_REASONING_NONE)
 
-    client = FireworksClient(ALLOWED_MODELS)
-    processor = TaskProcessor(client)
-    
     model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+    local_llm = None
     if os.path.exists(model_path):
-        processor.local_llm = LocalLLM(model_path)
+        local_llm = LocalLLM(model_path)
     else:
         logger.warning("Local LLM model not found at %s. Skipping Tier 1.5.", model_path)
+
+    client = FireworksClient(ALLOWED_MODELS, local_llm)
+    processor = TaskProcessor(client)
+    if local_llm:
+        processor.local_llm = local_llm
 
     results = []
     total_start = time.time()
