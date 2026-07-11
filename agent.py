@@ -417,7 +417,7 @@ class FireworksClient:
                 "base_url": FIREWORKS_BASE_URL,
             }
             if with_reasoning_none:
-                kwargs["model_kwargs"] = {"reasoning_effort": "none"}
+                kwargs["reasoning_effort"] = "none"
             self._cache[key] = ChatOpenAI(**kwargs)
         return self._cache[key]
 
