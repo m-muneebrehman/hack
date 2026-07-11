@@ -4,6 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.uv
+    platform: linux/amd64        # Required for AMD/x86 harness
     image: agent-system:latest
     container_name: agent-system
     env_file:

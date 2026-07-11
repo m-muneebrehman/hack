@@ -1,62 +1,34 @@
 [
   {
-    "task_id": "t1",
-    "prompt": "Calculate 15% of 200"
+    "task_id": "practice-01",
+    "prompt": "What is the capital of Australia, and what body of water is it near?"
   },
   {
-    "task_id": "t2",
-    "prompt": "Who is the CEO of Apple?"
+    "task_id": "practice-02",
+    "prompt": "A store has 240 items. It sells 15% on Monday and 60 more on Tuesday. How many items remain?"
   },
   {
-    "task_id": "t3",
-    "prompt": "This product is amazing! I love it."
+    "task_id": "practice-03",
+    "prompt": "Classify the sentiment of this review: The battery life is great, but the screen scratches too easily."
   },
   {
-    "task_id": "t4",
-    "prompt": "Summarize the history of Rome in two sentences."
+    "task_id": "practice-04",
+    "prompt": "Summarize the following in exactly one sentence: The Amazon rainforest, often called the 'lungs of the Earth', produces about 20% of the world's oxygen and is home to an estimated 10% of all species on Earth. It spans nine countries in South America and is threatened by deforestation at an alarming rate."
   },
   {
-    "task_id": "t5",
-    "prompt": "Extract the named entities from: John Smith works at Google in New York."
+    "task_id": "practice-05",
+    "prompt": "Extract all named entities and their types from: Maria Sanchez joined Fireworks AI in Berlin last March."
   },
   {
-    "task_id": "t6",
-    "prompt": "Fix this code: def add(a, b) return a + b"
+    "task_id": "practice-06",
+    "prompt": "This function should return the max of a list but has a bug: def get_max(nums): return nums[0]. Find and fix it."
   },
   {
-    "task_id": "t7",
-    "prompt": "If all cats are mammals, and flippers is a cat, is flippers a mammal?"
+    "task_id": "practice-07",
+    "prompt": "Three friends, Sam, Jo, and Lee, each own a different pet: cat, dog, bird. Sam does not own the bird. Jo owns the dog. Who owns the cat?"
   },
   {
-    "task_id": "t8",
-    "prompt": "Write a python function that returns the fibonacci sequence."
-  },
-  {
-    "task_id": "t9",
-    "prompt": "What is the capital of France?"
-  },
-  {
-    "task_id": "t10",
-    "prompt": "Calculate the square root of 144 and multiply it by 5."
-  },
-  {
-    "task_id": "t11",
-    "prompt": "The service was terrible and the food was cold. Never coming back."
-  },
-  {
-    "task_id": "t12",
-    "prompt": "Explain the concept of quantum entanglement."
-  },
-  {
-    "task_id": "t13",
-    "prompt": "Find the bug: for i in range(10) print(i)"
-  },
-  {
-    "task_id": "t14",
-    "prompt": "Identify organizations in this text: The WHO and the UN are holding a summit in Geneva."
-  },
-  {
-    "task_id": "t15",
-    "prompt": "Write a python script that reads a CSV file and prints the number of rows."
+    "task_id": "practice-08",
+    "prompt": "Write a Python function that returns the second-largest number in a list, handling duplicates correctly."
   }
 ]

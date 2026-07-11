@@ -1,70 +1,118 @@
-# AI Agent System
+# AI Agent System — Fireworks AI Hackathon (Track 1)
 
-A high-performance, token-efficient AI agent designed for the Fireworks AI Challenge. This system uses a hybrid supervisor-worker pattern to process tasks with high accuracy while drastically minimizing API costs.
+A **token-efficient, accuracy-first AI agent** for the Fireworks AI Challenge. Uses a 3-tier processing pipeline to minimize Fireworks API token consumption while maintaining high answer quality across all 8 task categories.
 
-## Architecture Workflow
+## Architecture
 
-1. **Input Parsing**: Tasks are loaded sequentially from `/input/tasks.json`.
-2. **Zero-Token Router**: A heuristic keyword classifier attempts to map the prompt to one of 8 specialized categories. This bypasses the LLM entirely for obvious tasks, saving ~50-100 tokens per request.
-3. **LLM Supervisor (Fallback)**: If the keyword classifier is uncertain, a lightweight LLM router categorizes the prompt using strict structured output validation (`json_schema`).
-4. **Specialized Workers**: The task is sent to the LLM accompanied by a hyper-condensed system prompt specific to its category, ensuring accurate and token-efficient responses.
-5. **Output Generation**: Processed results and error fallbacks are logged to `agent.log` and the final payload is written to `/output/results.json`.
+```
+Prompt → [Tier 0: Keyword Classifier] → category
+               ↓ (uncertain)
+         [LLM Router via Fireworks]
+               ↓
+         [Tier 1: Local Processors]     ← ZERO tokens for math / sentiment / NER
+               ↓ (complex tasks)
+         [Tier 2: Fireworks API]        ← minimal tokens, compressed prompts
+               ↓
+         /output/results.json
+```
 
----
+| Tier | Method | Token Cost |
+|------|--------|-----------|
+| 0 | Regex keyword classifier | **0** |
+| 1a | Deterministic Python math solver | **0** |
+| 1b | TextBlob sentiment analysis | **0** |
+| 1c | spaCy NER (en_core_web_sm) | **0** |
+| 2 | Fireworks API (llama-v3p3-70b) | Minimal |
 
 ## Local Development
 
-We use `uv` for ultra-fast Python dependency management.
+### Prerequisites
+- Python 3.11+
+- A Fireworks AI API key
 
-### 1. Setup
-Create a `.env` file in the root directory and add your API key:
-```env
-GOOGLE_API_KEY="your_api_key_here"
-```
-
-### 2. Run
-Execute the agent directly:
+### Setup
 ```bash
-uv run python agent.py
-```
-*Note: Test tasks are located in `input/tasks.json`. Check `agent.log` for token usage and routing decisions.*
+# 1. Install dependencies
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm
 
----
+# 2. Create .env (never committed or baked into Docker image)
+cat > .env << EOF
+FIREWORKS_API_KEY=fw_your_key_here
+FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1
+ALLOWED_MODELS=accounts/fireworks/models/llama-v3p3-70b-instruct
+EOF
+
+# 3. Run agent
+python agent.py
+
+# 4. Check output
+cat output/results.json
+```
+
+### Run Tests
+```bash
+pip install pytest
+pytest tests/ -v
+```
 
 ## Docker Deployment
 
-To run the agent in a secure, containerized environment matching the challenge requirements:
-
-### 1. Build & Run (Easiest Method)
-We provide a `docker-compose.yml` file which automatically handles volume mounting and passing environment variables from your `.env` file.
-
-Simply run:
+### Build & Run (Recommended)
 ```bash
+# Uses docker-compose.yml which reads .env automatically
 docker compose up --build
 ```
 
-### Alternative: Manual Docker Commands
-If you prefer not to use Compose, you can build and run manually:
-
-**Build:**
+### Manual Build (for linux/amd64 — required for harness)
 ```bash
-docker build -t agent-system:latest -f Dockerfile.uv .
-```
+# Build (always target linux/amd64)
+docker buildx build --platform linux/amd64 -t agent-system:latest -f Dockerfile.uv .
 
-**Run (Windows PowerShell):**
-```powershell
-docker run --rm `
-  -v "${PWD}/input:/input" `
-  -v "${PWD}/output:/output" `
-  -e GOOGLE_API_KEY="your_api_key_here" `
-  agent-system:latest
-```
-
-**Run (Linux / macOS Bash):**
-```bash
+# Run
 docker run --rm \
   -v $(pwd)/input:/input \
   -v $(pwd)/output:/output \
-  -e GOOGLE_API_KEY="your_api_key_here" \
+  --env-file .env \
   agent-system:latest
 ```
+
+### Push to GitHub Container Registry
+```bash
+# Login
+echo $GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+
+# Tag
+docker tag agent-system:latest ghcr.io/YOUR_GITHUB_USERNAME/agent-system:latest
+
+# Push
+docker push ghcr.io/YOUR_GITHUB_USERNAME/agent-system:latest
+```
+
+## Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|---------|
+| `FIREWORKS_API_KEY` | Provided by harness — do **not** use your own | Yes |
+| `FIREWORKS_BASE_URL` | All Fireworks calls routed through this | Yes |
+| `ALLOWED_MODELS` | Comma-separated permitted model IDs | Yes |
+
+> **Never hardcode these values or bundle `.env` in the Docker image.**
+
+## Pre-Submission Checklist
+
+- [ ] `output/results.json` contains `task_id` and `answer` keys (not `result`)
+- [ ] All tasks are processed (no `[:3]` cap)
+- [ ] No `GOOGLE_API_KEY` references in code
+- [ ] Image built with `--platform linux/amd64`
+- [ ] No `.env` file in image
+- [ ] Image < 10 GB compressed
+- [ ] Exit code 0 on success
+- [ ] Local end-to-end test passes with all 8 practice tasks
+
+## Scoring Strategy
+
+- **Token efficiency rank**: fewer Fireworks tokens = higher rank
+- Local processing (math/sentiment/NER) saves ~3–4 Fireworks API calls per evaluation run
+- System prompts kept under 25 words to minimize input tokens
+- Per-category `max_tokens` limits control output token spend

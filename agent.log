@@ -173,3 +173,90 @@
 2026-07-09 12:10:08,134 - ERROR - Worker execution failed for task t3: Error calling model 'gemini-2.5-flash' (RESOURCE_EXHAUSTED): 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\nPlease retry in 52.477728373s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '52s'}]}}
 2026-07-09 12:10:08,136 - INFO - Task t3 completed in 71.86s
 2026-07-09 12:10:08,139 - INFO - Successfully processed 15 tasks in 96.30s
+2026-07-11 09:04:31,624 - INFO - TextBlob loaded - local sentiment enabled.
+2026-07-11 09:04:32,259 - INFO - spaCy loaded - local NER enabled.
+2026-07-11 09:04:32,262 - INFO - Model roster (cheapest to most expensive):
+2026-07-11 09:04:32,262 - INFO -   [3B] accounts/fireworks/models/llama-v3p2-3b-instruct
+2026-07-11 09:04:32,262 - INFO -   [8B] accounts/fireworks/models/llama-v3p1-8b-instruct
+2026-07-11 09:04:32,263 - INFO -   [70B] accounts/fireworks/models/llama-v3p3-70b-instruct
+2026-07-11 10:43:24,314 - INFO - TextBlob ready - local sentiment enabled.
+2026-07-11 10:43:27,107 - INFO - spaCy ready - local NER enabled.
+2026-07-11 10:43:27,126 - INFO - Loaded 8 tasks. Primary model: ['accounts/fireworks/models/kimi-k2p7-code']
+2026-07-11 10:43:27,126 - INFO - reasoning_effort:none = True
+2026-07-11 10:43:27,126 - INFO - Primary model: accounts/fireworks/models/kimi-k2p7-code (preferred)
+2026-07-11 10:43:27,746 - INFO - spaCy en_core_web_sm ready.
+2026-07-11 10:43:29,421 - INFO - [practice-01] Keyword route -> factual
+2026-07-11 10:43:30,088 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-07-11 10:43:30,089 - WARNING - Model kimi-k2p7-code failed: Error code: 401 - {'error': {'message': 'The API key you provided is invalid.', 'param': None, 'code': 'UNAUTHORIZED', 'type': 'error'}, 'request_id': 'chatcmpl-62eb18c5ca464fcaadcdbdc7a8231b48'} — trying next.
+2026-07-11 10:43:30,089 - INFO - [practice-01] done via [fireworks[kimi-k2p7-code]] in 0.67s
+2026-07-11 10:43:30,090 - INFO - [practice-02] Keyword route -> math
+2026-07-11 10:43:30,209 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-07-11 10:43:30,210 - WARNING - Model kimi-k2p7-code failed: Error code: 401 - {'error': {'message': 'The API key you provided is invalid.', 'param': None, 'code': 'UNAUTHORIZED', 'type': 'error'}, 'request_id': 'chatcmpl-68f20f7c80f048278f78bf90dd896883'} — trying next.
+2026-07-11 10:43:30,210 - INFO - [practice-02] done via [fireworks[kimi-k2p7-code]] in 0.12s
+2026-07-11 10:43:30,210 - INFO - [practice-03] Keyword route -> sentiment
+2026-07-11 10:43:30,258 - INFO - [practice-03] done via [textblob] in 0.05s
+2026-07-11 10:43:30,258 - INFO - [practice-04] Keyword route -> math
+2026-07-11 10:43:30,443 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-07-11 10:43:30,444 - WARNING - Model kimi-k2p7-code failed: Error code: 401 - {'error': {'message': 'The API key you provided is invalid.', 'param': None, 'code': 'UNAUTHORIZED', 'type': 'error'}, 'request_id': 'chatcmpl-0ee19f5d4a754f2a95f4afdeeac428c1'} — trying next.
+2026-07-11 10:43:30,444 - INFO - [practice-04] done via [fireworks[kimi-k2p7-code]] in 0.19s
+2026-07-11 10:43:30,444 - INFO - [practice-05] Keyword route -> ner
+2026-07-11 10:43:30,467 - INFO - [practice-05] done via [spacy] in 0.02s
+2026-07-11 10:43:30,468 - INFO - [practice-06] Keyword route -> code_debug
+2026-07-11 10:43:30,587 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-07-11 10:43:30,587 - WARNING - Model kimi-k2p7-code failed: Error code: 401 - {'error': {'message': 'The API key you provided is invalid.', 'param': None, 'code': 'UNAUTHORIZED', 'type': 'error'}, 'request_id': 'chatcmpl-fe0252bf10fc4a478e775b28e58e6103'} — trying next.
+2026-07-11 10:43:30,588 - INFO - [practice-06] done via [fireworks[kimi-k2p7-code]] in 0.12s
+2026-07-11 10:43:30,588 - INFO - [practice-07] Keyword route -> logic
+2026-07-11 10:43:30,711 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-07-11 10:43:30,712 - WARNING - Model kimi-k2p7-code failed: Error code: 401 - {'error': {'message': 'The API key you provided is invalid.', 'param': None, 'code': 'UNAUTHORIZED', 'type': 'error'}, 'request_id': 'chatcmpl-440fb69e609542efb92df0f11cf2ca52'} — trying next.
+2026-07-11 10:43:30,712 - INFO - [practice-07] done via [fireworks[kimi-k2p7-code]] in 0.12s
+2026-07-11 10:43:30,712 - INFO - [practice-08] Keyword route -> code_gen
+2026-07-11 10:43:30,829 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 401 Unauthorized"
+2026-07-11 10:43:30,829 - WARNING - Model kimi-k2p7-code failed: Error code: 401 - {'error': {'message': 'The API key you provided is invalid.', 'param': None, 'code': 'UNAUTHORIZED', 'type': 'error'}, 'request_id': 'chatcmpl-98c6d454b925488a9f1a4a430f3417ca'} — trying next.
+2026-07-11 10:43:30,829 - INFO - [practice-08] done via [fireworks[kimi-k2p7-code]] in 0.12s
+2026-07-11 10:43:30,830 - INFO - Written output/results.json (8 tasks)
+2026-07-11 10:43:30,830 - INFO - Done in 1.41s | reasoning_none=True
+2026-07-11 10:45:42,133 - INFO - TextBlob ready - local sentiment enabled.
+2026-07-11 10:45:42,692 - INFO - spaCy ready - local NER enabled.
+2026-07-11 10:45:42,694 - INFO - Loaded 8 tasks. Primary model: ['accounts/fireworks/models/kimi-k2p7-code']
+2026-07-11 10:45:42,694 - INFO - reasoning_effort:none = True
+2026-07-11 10:45:42,694 - INFO - Primary model: accounts/fireworks/models/kimi-k2p7-code (preferred)
+2026-07-11 10:45:43,016 - INFO - spaCy en_core_web_sm ready.
+2026-07-11 10:45:44,172 - INFO - [practice-01] Keyword route -> factual
+2026-07-11 10:45:45,673 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:45,679 - INFO - [factual] model=kimi-k2p7-code reasoning_none=True tokens=67 finish=stop
+2026-07-11 10:45:45,679 - INFO - [practice-01] done via [fireworks[kimi-k2p7-code]] in 1.51s
+2026-07-11 10:45:45,680 - INFO - [practice-02] Keyword route -> math
+2026-07-11 10:45:46,993 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:46,994 - INFO - [math] model=kimi-k2p7-code reasoning_none=True tokens=133 finish=length
+2026-07-11 10:45:46,994 - WARNING - Answer truncated (finish_reason=length) — retrying.
+2026-07-11 10:45:46,994 - INFO - Validation failed; retrying [math] with thinking ON.
+2026-07-11 10:45:48,813 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:48,814 - INFO - [math] model=kimi-k2p7-code reasoning_none=False tokens=191 finish=stop
+2026-07-11 10:45:48,814 - INFO - [practice-02] done via [fireworks[kimi-k2p7-code]] in 3.13s
+2026-07-11 10:45:48,814 - INFO - [practice-03] Keyword route -> sentiment
+2026-07-11 10:45:48,836 - INFO - [practice-03] done via [textblob] in 0.02s
+2026-07-11 10:45:48,836 - INFO - [practice-04] Keyword route -> math
+2026-07-11 10:45:49,745 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:49,746 - INFO - [math] model=kimi-k2p7-code reasoning_none=True tokens=141 finish=stop
+2026-07-11 10:45:49,746 - INFO - [practice-04] done via [fireworks[kimi-k2p7-code]] in 0.91s
+2026-07-11 10:45:49,746 - INFO - [practice-05] Keyword route -> ner
+2026-07-11 10:45:49,753 - INFO - [practice-05] done via [spacy] in 0.01s
+2026-07-11 10:45:49,753 - INFO - [practice-06] Keyword route -> code_debug
+2026-07-11 10:45:50,631 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:50,631 - INFO - [code_debug] model=kimi-k2p7-code reasoning_none=True tokens=91 finish=stop
+2026-07-11 10:45:50,632 - WARNING - Code syntax error in [code_debug] — retrying.
+2026-07-11 10:45:50,632 - INFO - Validation failed; retrying [code_debug] with thinking ON.
+2026-07-11 10:45:51,836 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:51,837 - INFO - [code_debug] model=kimi-k2p7-code reasoning_none=False tokens=212 finish=stop
+2026-07-11 10:45:51,838 - WARNING - Code syntax error in [code_debug] — retrying.
+2026-07-11 10:45:51,838 - INFO - [practice-06] done via [fireworks[kimi-k2p7-code]] in 2.09s
+2026-07-11 10:45:51,838 - INFO - [practice-07] Keyword route -> logic
+2026-07-11 10:45:53,565 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:53,565 - INFO - [logic] model=kimi-k2p7-code reasoning_none=True tokens=182 finish=stop
+2026-07-11 10:45:53,566 - INFO - [practice-07] done via [fireworks[kimi-k2p7-code]] in 1.73s
+2026-07-11 10:45:53,566 - INFO - [practice-08] Keyword route -> code_gen
+2026-07-11 10:45:54,589 - INFO - HTTP Request: POST https://api.fireworks.ai/inference/v1/chat/completions "HTTP/1.1 200 OK"
+2026-07-11 10:45:54,590 - INFO - [code_gen] model=kimi-k2p7-code reasoning_none=True tokens=121 finish=stop
+2026-07-11 10:45:54,590 - INFO - [practice-08] done via [fireworks[kimi-k2p7-code]] in 1.02s
+2026-07-11 10:45:54,591 - INFO - Written output/results.json (8 tasks)
+2026-07-11 10:45:54,591 - INFO - Done in 10.42s | reasoning_none=True

@@ -1,18 +1,30 @@
 FROM python:3.11-slim
 
-RUN pip install uv
+# Install uv for fast dependency management
+RUN pip install uv --no-cache-dir
 
 WORKDIR /app
 
+# Copy dependency files first (layer cache optimization)
 COPY pyproject.toml uv.lock ./
 
+# Install Python dependencies
 RUN uv sync --frozen --no-dev
 
+# Download spaCy model (en_core_web_sm ≈ 12 MB)
+RUN uv run python -m spacy download en_core_web_sm
+
+# Download TextBlob corpora (punkt tokenizer ≈ 1 MB)
+RUN uv run python -c "import textblob; textblob.download_corpora('lite')" 2>/dev/null || \
+    uv run python -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perceptron_tagger')"
+
+# Copy application code
 COPY agent.py .
 
+# Create I/O mount points
 RUN mkdir -p /input /output
 
-ENV GOOGLE_API_KEY=""
+# Environment variables — injected by harness at runtime, never hardcoded
 ENV FIREWORKS_API_KEY=""
 ENV FIREWORKS_BASE_URL=""
 ENV ALLOWED_MODELS=""

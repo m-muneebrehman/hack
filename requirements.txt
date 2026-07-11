@@ -1,8 +1,6 @@
-langgraph>=0.2
-langchain-google-genai>=1.0
+langchain-openai>=0.2
 langchain-core>=0.3
 pydantic>=2.0
 python-dotenv>=1.0
-pytest
-black
-mypy
+textblob>=0.18
+spacy>=3.7
